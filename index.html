@@ -1,0 +1,716 @@
+﻿<!DOCTYPE html>
+<html lang="en">
+  <head>
+    <meta charset="UTF-8" />
+    <meta name="viewport" content="width=device-width, initial-scale=1.0" />
+    <title>Receipt OCR</title>
+    <style>
+      :root {
+        --bg: #04060e;
+        --panel: #f7f3f3;
+        --panel-soft: #1a6aea;
+        --primary: #4f46e5;
+        --primary-2: #7c3aed;
+        --accent: #10b981;
+        --warning: #d18a10;
+        --text: #1aca2f;
+        --muted: #427aeb;
+        --border: #fcfdfd;
+        --shadow: 0 19px 40px rgba(79, 70, 229, 0.12);
+      }
+
+      * { box-sizing: border-box; }
+
+      body {
+        margin: 0;
+        min-height: 100vh;
+        font-family: "Segoe UI", Tahoma, Geneva, Verdana, sans-serif;
+        background: linear-gradient(135deg, #edf4ff 0%, #f6f1ff 100%);
+        color: var(--text);
+      }
+
+      .container {
+        max-width: 1200px;
+        margin: 0 auto;
+        padding: 24px 20px 60px;
+      }
+
+      .navbar {
+        display: flex;
+        align-items: center;
+        justify-content: space-between;
+        gap: 16px;
+        background: rgba(255, 255, 255, 0.75);
+        backdrop-filter: blur(10px);
+        border: 1px solid rgba(223, 232, 245, 0.9);
+        border-radius: 18px;
+        padding: 16px 20px;
+        box-shadow: var(--shadow);
+        margin-bottom: 22px;
+      }
+
+      .brand {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .brand-mark {
+        width: 42px;
+        height: 42px;
+        border-radius: 12px;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, var(--primary), var(--primary-2));
+        color: white;
+        font-size: 22px;
+        box-shadow: 0 10px 20px rgba(79, 70, 229, 0.2);
+      }
+
+      .brand-text {
+        font-size: 1.15rem;
+        font-weight: 700;
+      }
+
+      .nav-actions {
+        display: flex;
+        align-items: center;
+        gap: 12px;
+      }
+
+      .badge {
+        display: inline-flex;
+        align-items: center;
+        gap: 8px;
+        background: #eff6ff;
+        color: #1d4ed8;
+        border: 1px solid #dbeafe;
+        border-radius: 999px;
+        padding: 8px 12px;
+        font-size: 0.82rem;
+        font-weight: 700;
+      }
+
+      .upgrade-btn,
+      .primary-btn,
+      .secondary-btn,
+      .list-btn {
+        border: none;
+        border-radius: 12px;
+        font-weight: 700;
+        cursor: pointer;
+        transition: transform 0.15s ease, box-shadow 0.15s ease;
+      }
+
+      .upgrade-btn,
+      .primary-btn {
+        background: linear-gradient(135deg, var(--primary), var(--primary-2));
+        color: white;
+        box-shadow: 0 10px 18px rgba(79, 70, 229, 0.22);
+      }
+
+      .upgrade-btn {
+        padding: 11px 16px;
+      }
+
+      .primary-btn,
+      .secondary-btn {
+        padding: 12px 16px;
+      }
+
+      .secondary-btn {
+        background: #edf5ff;
+        color: #1d4ed8;
+        border: 1px solid #dbeafe;
+      }
+
+      .upgrade-btn:hover,
+      .primary-btn:hover,
+      .secondary-btn:hover,
+      .list-btn:hover {
+        transform: translateY(-1px);
+      }
+
+      .dashboard {
+        display: grid;
+        grid-template-columns: 340px 1fr;
+        gap: 22px;
+      }
+
+      .column {
+        display: flex;
+        flex-direction: column;
+        gap: 22px;
+      }
+
+      .card {
+        background: var(--panel);
+        border: 1px solid var(--border);
+        border-radius: 22px;
+        box-shadow: var(--shadow);
+        padding: 22px;
+      }
+
+      .profile-card {
+        background: linear-gradient(135deg, rgba(79,70,229,0.08), rgba(124,58,237,0.06));
+      }
+
+      .profile-header {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 18px;
+      }
+
+      .profile-label {
+        color: var(--muted);
+        font-size: 0.8rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      .profile-name {
+        font-size: 1.5rem;
+        font-weight: 700;
+        margin-top: 4px;
+      }
+
+      .profile-avatar {
+        width: 54px;
+        height: 54px;
+        border-radius: 50%;
+        display: grid;
+        place-items: center;
+        background: linear-gradient(135deg, var(--primary), var(--primary-2));
+        color: white;
+        font-weight: 700;
+        font-size: 1.15rem;
+      }
+
+      .profile-meta {
+        display: grid;
+        grid-template-columns: repeat(2, minmax(0, 1fr));
+        gap: 12px;
+        margin-top: 18px;
+      }
+
+      .metric {
+        background: rgba(255,255,255,0.64);
+        border: 1px solid rgba(223,232,245,0.8);
+        border-radius: 14px;
+        padding: 12px 14px;
+      }
+
+      .metric-label {
+        font-size: 0.74rem;
+        color: var(--muted);
+        display: block;
+        margin-bottom: 4px;
+      }
+
+      .metric-value {
+        font-size: 1.1rem;
+        font-weight: 700;
+      }
+
+      .section-heading {
+        display: flex;
+        justify-content: space-between;
+        align-items: center;
+        margin-bottom: 18px;
+      }
+
+      .stats-grid {
+        display: grid;
+        grid-template-columns: repeat(3, minmax(0, 1fr));
+        gap: 16px;
+      }
+
+      .stat-card {
+        background: linear-gradient(180deg, #f9faff, #eef5ff);
+        border: 1px solid #e3ebff;
+        border-radius: 18px;
+        padding: 18px 16px;
+      }
+
+      .stat-card .label {
+        color: var(--muted);
+        font-size: 0.78rem;
+        text-transform: uppercase;
+        letter-spacing: 0.06em;
+      }
+
+      .stat-card .value {
+        margin-top: 10px;
+        font-size: clamp(1.4rem, 2vw, 2rem);
+        font-weight: 800;
+      }
+
+      .mini {
+        color: var(--muted);
+        font-size: 0.75rem;
+        margin-top: 4px;
+      }
+
+      .form-grid {
+        display: flex;
+        flex-direction: column;
+        gap: 14px;
+      }
+
+      label {
+        font-size: 0.8rem;
+        color: var(--muted);
+        margin-bottom: 6px;
+        display: block;
+      }
+
+      input[type="email"],
+      input[type="password"],
+      input[type="file"] {
+        width: 100%;
+        border: 1px solid var(--border);
+        background: #f8fafc;
+        border-radius: 12px;
+        padding: 12px 14px;
+        font-size: 0.95rem;
+      }
+
+      .status {
+        min-height: 22px;
+        font-size: 0.9rem;
+        font-weight: 600;
+        color: var(--muted);
+      }
+
+      .receipt-list {
+        list-style: none;
+        padding: 0;
+        margin: 16px 0;
+        display: flex;
+        flex-direction: column;
+        gap: 10px;
+      }
+
+      .list-btn {
+        width: 100%;
+        text-align: left;
+        background: #edf3ff;
+        color: #1f2937;
+        border: 1px solid #dfe8f5;
+        padding: 10px 12px;
+      }
+
+      .receipt-preview {
+        background: #f8fbff;
+        border: 1px solid var(--border);
+        border-radius: 16px;
+        padding: 18px;
+        color: var(--text);
+        line-height: 1.6;
+        white-space: pre-wrap;
+        min-height: 220px;
+      }
+
+      @media (max-width: 900px) {
+        .dashboard {
+          grid-template-columns: 1fr;
+        }
+      }
+    </style>
+  </head>
+  <body>
+    <div class="container">
+      <nav class="navbar">
+        <div class="brand">
+          <div class="brand-mark">R</div>
+          <div class="brand-text">ReceiptFlow</div>
+        </div>
+
+        <div class="nav-actions">
+          <span class="badge" id="planBadge">Starter</span>
+          <button id="upgradeBtn" class="upgrade-btn">Upgrade</button>
+        </div>
+      </nav>
+
+      <main class="dashboard">
+        <div class="column">
+          <section class="card profile-card">
+            <div class="profile-header">
+              <div>
+                <div class="profile-label">Account</div>
+                <div id="profileName" class="profile-name">Guest</div>
+              </div>
+              <div id="profileInitials" class="profile-avatar">G</div>
+            </div>
+
+            <div class="profile-meta">
+              <div class="metric">
+                <span class="metric-label">Plan</span>
+                <span id="profilePlan" class="metric-value">Starter</span>
+              </div>
+              <div class="metric">
+                <span class="metric-label">Usage</span>
+                <span id="profileUsage" class="metric-value">0 / 20</span>
+              </div>
+              <div class="metric" style="grid-column: 1 / -1;">
+                <span class="metric-label">Email</span>
+                <span id="profileEmail" class="metric-value">-</span>
+              </div>
+              <div class="metric" style="grid-column: 1 / -1;">
+                <span class="metric-label">Status</span>
+                <span id="profileStatus" class="metric-value">Pending</span>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="section-heading">
+              <h2>Login</h2>
+            </div>
+
+            <div class="form-grid">
+              <div>
+                <label for="email">Email</label>
+                <input id="email" type="email" placeholder="user@example.com" />
+              </div>
+              <div>
+                <label for="password">Password</label>
+                <input id="password" type="password" placeholder="••••••••" />
+              </div>
+              <button id="loginBtn" class="primary-btn">Login</button>
+              <div id="loginStatus" class="status">Ready</div>
+            </div>
+          </section>
+
+          <section class="card">
+            <div class="section-heading">
+              <h2>Upload Receipt</h2>
+            </div>
+
+            <div class="form-grid">
+              <div>
+                <label for="receiptFile">Choose file</label>
+                <input id="receiptFile" type="file" accept="image/*,.pdf" />
+              </div>
+              <button id="uploadBtn" class="secondary-btn">Upload</button>
+              <div id="uploadStatus" class="status">No file selected</div>
+            </div>
+          </section>
+        </div>
+
+        <div class="column">
+          <section class="card">
+            <div class="section-heading">
+              <h2>Dashboard</h2>
+              <span id="updatedLabel" class="badge">Updated now</span>
+            </div>
+
+            <div class="stats-grid">
+              <div class="stat-card">
+                <div class="label">Receipts</div>
+                <div id="receiptCount" class="value">0</div>
+                <div class="mini">This month</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">Processed</div>
+                <div id="processedAmount" class="value">$0.00</div>
+                <div class="mini">OCR value</div>
+              </div>
+              <div class="stat-card">
+                <div class="label">Savings</div>
+                <div id="savingsValue" class="value">0%</div>
+                <div class="mini">Efficiency</div>
+              </div>
+            </div>
+          </section>
+
+          <section class="card">
+            <h2>My Receipts</h2>
+            <button id="fetchBtn" class="primary-btn">Load Receipts</button>
+            <ul id="receiptsList" class="receipt-list"></ul>
+            <div id="receiptDetail" class="receipt-preview">No receipt selected.</div>
+          </section>
+        </div>
+      </main>
+    </div>
+
+        <script>
+      const API_BASE = `${window.location.origin}/api/v1`;
+
+      function setStatus(elementId, message, color = "#64748b") {
+        const el = document.getElementById(elementId);
+        if (!el) return;
+        el.textContent = message;
+        el.style.color = color;
+      }
+
+      function updateProfileUI(profile = null) {
+        const nameEl = document.getElementById("profileName");
+        const initialsEl = document.getElementById("profileInitials");
+        const emailEl = document.getElementById("profileEmail");
+        const planEl = document.getElementById("profilePlan");
+        const usageEl = document.getElementById("profileUsage");
+        const statusEl = document.getElementById("profileStatus");
+        const badgeEl = document.getElementById("planBadge");
+
+        const defaultPlan = "Starter";
+        const plan = profile?.plan || defaultPlan;
+        const email = profile?.email || "-";
+        const usage = profile?.usage || "0 / 20";
+        const status = profile?.status || "Pending";
+
+        nameEl.textContent = profile?.name || "Guest";
+        initialsEl.textContent = (profile?.name || "G").charAt(0).toUpperCase();
+        emailEl.textContent = email;
+        planEl.textContent = plan;
+        usageEl.textContent = usage;
+        statusEl.textContent = status;
+        badgeEl.textContent = plan;
+      }
+
+      function showReceiptText(receipt) {
+        const detailBox = document.getElementById("receiptDetail");
+        if (!receipt) {
+          detailBox.textContent = "No receipt selected.";
+          return;
+        }
+
+        const total = receipt.total_amount ?? "N/A";
+        const date = receipt.invoice_date ?? "N/A";
+        const text = receipt.raw_text || "No OCR text available.";
+        const safeText = String(text)
+          .replace(/&/g, "&amp;")
+          .replace(/</g, "&lt;")
+          .replace(/>/g, "&gt;")
+          .replace(/\r?\n/g, "<br>");
+
+        detailBox.innerHTML = `
+          <strong>Filename:</strong> ${receipt.filename || "Unknown"}<br>
+          <strong>ID:</strong> ${receipt.id}<br>
+          <strong>Total:</strong> $${total}<br>
+          <strong>Date:</strong> ${date}<br><br>
+          <strong>Receipt content:</strong><br>
+          ${safeText}
+        `;
+      }
+
+      async function fetchProfile() {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+          throw new Error("No token found. Please login first.");
+        }
+
+        const response = await fetch(`${API_BASE}/profile`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to load profile");
+        }
+
+        return await response.json();
+      }
+
+      async function login(email, password) {
+        const formData = new URLSearchParams();
+        formData.append("username", email);
+        formData.append("password", password);
+
+        const response = await fetch(`${API_BASE}/token`, {
+          method: "POST",
+          headers: {
+            "Content-Type": "application/x-www-form-urlencoded"
+          },
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error("Login failed");
+        }
+
+        const data = await response.json();
+        localStorage.setItem("access_token", data.access_token);
+        return data;
+      }
+
+      async function uploadReceipt(fileInput) {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+          throw new Error("No token found. Please login first.");
+        }
+
+        const file = fileInput.files[0];
+        if (!file) {
+          throw new Error("Please choose a receipt file first.");
+        }
+
+        const formData = new FormData();
+        formData.append("file", file);
+
+        const response = await fetch(`${API_BASE}/upload-receipt`, {
+          method: "POST",
+          headers: {
+            Authorization: `Bearer ${token}`
+          },
+          body: formData
+        });
+
+        if (!response.ok) {
+          throw new Error("Upload failed");
+        }
+
+        return await response.json();
+      }
+
+      async function fetchReceipts() {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+          throw new Error("No token found. Please login first.");
+        }
+
+        const response = await fetch(`${API_BASE}/receipts`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch receipts");
+        }
+
+        return await response.json();
+      }
+
+      async function fetchReceiptById(receiptId) {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+          throw new Error("No token found. Please login first.");
+        }
+
+        const response = await fetch(`${API_BASE}/receipts/${receiptId}`, {
+          method: "GET",
+          headers: {
+            Authorization: `Bearer ${token}`
+          }
+        });
+
+        if (!response.ok) {
+          throw new Error("Failed to fetch receipt details");
+        }
+
+        const receipt = await response.json();
+        showReceiptText(receipt);
+        return receipt;
+      }
+
+      async function startCheckout() {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+          setStatus("loginStatus", "Please log in before upgrading.", "#dc2626");
+          return;
+        }
+
+        try {
+          const response = await fetch(`${API_BASE}/checkout`, {
+            method: "POST",
+            headers: {
+              "Content-Type": "application/json",
+              Authorization: `Bearer ${token}`
+            },
+            body: JSON.stringify({ plan: "pro" })
+          });
+
+          if (!response.ok) {
+            throw new Error("Checkout unavailable");
+          }
+
+          const data = await response.json();
+          const checkoutUrl = data.checkout_url || data.url || data.redirect_url;
+
+          if (!checkoutUrl) {
+            throw new Error("Stripe checkout URL not returned");
+          }
+
+          window.location.href = checkoutUrl;
+        } catch (error) {
+          setStatus("loginStatus", error.message || "Unable to start Stripe checkout", "#dc2626");
+        }
+      }
+
+      document.getElementById("upgradeBtn").addEventListener("click", startCheckout);
+
+      document.getElementById("loginBtn").addEventListener("click", async () => {
+        const email = document.getElementById("email").value.trim();
+        const password = document.getElementById("password").value;
+
+        try {
+          await login(email, password);
+          setStatus("loginStatus", "Login successful!", "#16a34a");
+          const profile = await fetchProfile();
+          updateProfileUI(profile);
+        } catch (error) {
+          setStatus("loginStatus", error.message, "#dc2626");
+        }
+      });
+
+      document.getElementById("uploadBtn").addEventListener("click", async () => {
+        const fileInput = document.getElementById("receiptFile");
+
+        try {
+          const result = await uploadReceipt(fileInput);
+          setStatus("uploadStatus", "Upload successful!", "#16a34a");
+          if (result.raw_text) {
+            showReceiptText(result);
+          }
+        } catch (error) {
+          setStatus("uploadStatus", error.message, "#dc2626");
+        }
+      });
+
+      document.getElementById("fetchBtn").addEventListener("click", async () => {
+        const list = document.getElementById("receiptsList");
+
+        try {
+          const receipts = await fetchReceipts();
+          list.innerHTML = "";
+
+          if (!receipts || receipts.length === 0) {
+            list.innerHTML = "<li>No receipts found.</li>";
+            return;
+          }
+
+          receipts.forEach((receipt) => {
+            const li = document.createElement("li");
+            const button = document.createElement("button");
+            button.textContent = receipt.filename || "Receipt";
+            button.className = "list-btn";
+            button.addEventListener("click", () => fetchReceiptById(receipt.id));
+            li.appendChild(button);
+            list.appendChild(li);
+          });
+        } catch (error) {
+          list.innerHTML = `<li>${error.message}</li>`;
+        }
+      });
+
+      document.addEventListener("DOMContentLoaded", async () => {
+        updateProfileUI();
+        const token = localStorage.getItem("access_token");
+        if (!token) return;
+
+        try {
+          const profile = await fetchProfile();
+          updateProfileUI(profile);
+        } catch (error) {
+          updateProfileUI({ name: "Guest", plan: "Starter", usage: "0 / 20", status: "Pending" });
+        }
+      });
+    </script>
+
+  </body>
+</html>
