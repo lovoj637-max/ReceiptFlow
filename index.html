@@ -417,6 +417,7 @@
                 <input id="password" type="password" placeholder="••••••••" />
               </div>
               <button id="loginBtn" class="primary-btn">Login</button>
+              <button id="createAccountBtn" class="secondary-btn">Create account</button>
               <div id="loginStatus" class="status">Ready</div>
             </div>
           </section>
@@ -534,9 +535,10 @@
         const email = profile?.email || "-";
         const usage = profile?.usage || "0 / 20";
         const status = profile?.status || "Pending";
+        const displayName = profile?.name || (email !== "-" ? email : "Guest");
 
-        nameEl.textContent = profile?.name || "Guest";
-        initialsEl.textContent = (profile?.name || "G").charAt(0).toUpperCase();
+        nameEl.textContent = displayName;
+        initialsEl.textContent = displayName.charAt(0).toUpperCase();
         emailEl.textContent = email;
         planEl.textContent = plan;
         usageEl.textContent = usage;
@@ -651,6 +653,19 @@
         const data = await response.json();
         localStorage.setItem("access_token", data.access_token);
         return data;
+      }
+
+      async function createAccount(email, password) {
+        const response = await fetch(`${API_BASE}/signup`, {
+          method: "POST",
+          headers: { "Content-Type": "application/json" },
+          body: JSON.stringify({ email, password })
+        });
+        const data = await response.json();
+
+        if (!response.ok) {
+          throw new Error(data.detail || "Account creation failed");
+        }
       }
 
       async function uploadReceipt(fileInput) {
@@ -854,6 +869,24 @@
           setStatus("loginStatus", "Login successful!", "#16a34a");
           const profile = await fetchProfile();
           updateProfileUI(profile);
+        } catch (error) {
+          setStatus("loginStatus", error.message, "#dc2626");
+        }
+      });
+
+      document.getElementById("createAccountBtn").addEventListener("click", async () => {
+        const email = document.getElementById("email").value.trim();
+        const password = document.getElementById("password").value;
+        if (!email || !password) {
+          setStatus("loginStatus", "Enter an email and password to create an account.", "#dc2626");
+          return;
+        }
+
+        try {
+          await createAccount(email, password);
+          await login(email, password);
+          updateProfileUI(await fetchProfile());
+          setStatus("loginStatus", "Account created and signed in.", "#16a34a");
         } catch (error) {
           setStatus("loginStatus", error.message, "#dc2626");
         }
