@@ -312,6 +312,43 @@
         min-height: 220px;
       }
 
+      .tax-export {
+        display: flex;
+        align-items: end;
+        flex-wrap: wrap;
+        gap: 12px;
+        margin: 14px 0;
+      }
+
+      .tax-field {
+        display: flex;
+        flex-direction: column;
+        gap: 6px;
+        margin: 10px 0;
+      }
+
+      .tax-field input,
+      .tax-field select,
+      .tax-field textarea,
+      .tax-export input {
+        width: 100%;
+        border: 1px solid #cbd5e1;
+        border-radius: 8px;
+        padding: 10px;
+        font: inherit;
+        color: #1f2937;
+      }
+
+      .tax-field textarea {
+        min-height: 72px;
+        resize: vertical;
+      }
+
+      .tax-note {
+        color: #475569;
+        font-size: 0.9rem;
+      }
+
       @media (max-width: 900px) {
         .dashboard {
           grid-template-columns: 1fr;
@@ -427,6 +464,17 @@
 
           <section class="card">
             <h2>My Receipts</h2>
+            <div class="tax-export">
+              <label class="tax-field" for="taxYearInput">
+                Tax year
+                <input id="taxYearInput" type="number" min="2000" max="2100" />
+              </label>
+              <button id="exportReceiptsBtn" class="secondary-btn">Export CSV</button>
+              <div id="exportStatus" class="status"></div>
+            </div>
+            <p class="tax-note">
+              Organizer only. Review receipt dates and categories with your tax professional.
+            </p>
             <button id="fetchBtn" class="primary-btn">Load Receipts</button>
             <ul id="receiptsList" class="receipt-list"></ul>
             <div id="receiptDetail" class="receipt-preview">No receipt selected.</div>
@@ -437,6 +485,31 @@
 
         <script>
       const API_BASE = `${window.location.origin}/api/v1`;
+          const EXPENSE_CATEGORIES = [
+            "Uncategorized",
+            "Advertising",
+            "Car and travel",
+            "Contractors",
+            "Insurance",
+            "Meals",
+            "Office supplies",
+            "Professional services",
+            "Rent",
+            "Software",
+            "Supplies",
+            "Utilities",
+            "Other"
+          ];
+          let activeReceiptId = null;
+
+          function escapeHtml(value) {
+            return String(value ?? "")
+              .replace(/&/g, "&amp;")
+              .replace(/</g, "&lt;")
+              .replace(/>/g, "&gt;")
+              .replace(/"/g, "&quot;")
+              .replace(/'/g, "&#39;");
+          }
 
       function setStatus(elementId, message, color = "#64748b") {
         const el = document.getElementById(elementId);
@@ -472,27 +545,65 @@
       function showReceiptText(receipt) {
         const detailBox = document.getElementById("receiptDetail");
         if (!receipt) {
+          activeReceiptId = null;
           detailBox.textContent = "No receipt selected.";
           return;
         }
 
+        activeReceiptId = receipt.id;
         const total = receipt.total_amount ?? "N/A";
-        const date = receipt.invoice_date ?? "N/A";
+        const date = receipt.invoice_date ?? "";
         const text = receipt.raw_text || "No OCR text available.";
-        const safeText = String(text)
-          .replace(/&/g, "&amp;")
-          .replace(/</g, "&lt;")
-          .replace(/>/g, "&gt;")
-          .replace(/\r?\n/g, "<br>");
+        const safeText = escapeHtml(text).replace(/\r?\n/g, "<br>");
+        const selectedCategory = receipt.expense_category || "Uncategorized";
+        const categoryOptions = EXPENSE_CATEGORIES.map((category) => `
+          <option value="${escapeHtml(category)}" ${category === selectedCategory ? "selected" : ""}>
+            ${escapeHtml(category)}
+          </option>
+        `).join("");
 
         detailBox.innerHTML = `
-          <strong>Filename:</strong> ${receipt.filename || "Unknown"}<br>
+          <strong>Filename:</strong> ${escapeHtml(receipt.filename || "Unknown")}<br>
           <strong>ID:</strong> ${receipt.id}<br>
           <strong>Total:</strong> $${total}<br>
-          <strong>Date:</strong> ${date}<br><br>
-          <strong>Receipt content:</strong><br>
-          ${safeText}
+          <div class="tax-field">
+            <label for="merchantInput">Merchant</label>
+            <input id="merchantInput" maxlength="255" value="${escapeHtml(receipt.merchant || "")}">
+          </div>
+          <div class="tax-field">
+            <label for="invoiceDateInput">Receipt date</label>
+            <input id="invoiceDateInput" maxlength="50" value="${escapeHtml(date)}" placeholder="MM/DD/YYYY">
+          </div>
+          <div class="tax-field">
+            <label for="expenseCategoryInput">Expense category</label>
+            <select id="expenseCategoryInput">${categoryOptions}</select>
+          </div>
+          <div class="tax-field">
+            <label for="businessPurposeInput">Business purpose (optional)</label>
+            <textarea id="businessPurposeInput" maxlength="1000">${escapeHtml(receipt.business_purpose || "")}</textarea>
+          </div>
+          <button id="saveTaxDetailsBtn" class="primary-btn">Save tax details</button>
+          <div id="taxSaveStatus" class="status"></div>
+          <details>
+            <summary>Original OCR text</summary>
+            <div>${safeText}</div>
+          </details>
         `;
+
+        document.getElementById("saveTaxDetailsBtn").addEventListener("click", async () => {
+          try {
+            const updated = await updateReceipt(activeReceiptId, {
+              merchant: document.getElementById("merchantInput").value,
+              invoice_date: document.getElementById("invoiceDateInput").value,
+              expense_category: document.getElementById("expenseCategoryInput").value,
+              business_purpose: document.getElementById("businessPurposeInput").value
+            });
+            showReceiptText(updated);
+            setStatus("taxSaveStatus", "Tax details saved.", "#16a34a");
+          } catch (error) {
+            setStatus("taxSaveStatus", error.message, "#dc2626");
+          }
+        });
       }
 
       async function fetchProfile() {
@@ -608,6 +719,56 @@
         return receipt;
       }
 
+      async function updateReceipt(receiptId, updates) {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+          throw new Error("No token found. Please login first.");
+        }
+
+        const response = await fetch(`${API_BASE}/receipts/${receiptId}`, {
+          method: "PATCH",
+          headers: {
+            "Content-Type": "application/json",
+            Authorization: `Bearer ${token}`
+          },
+          body: JSON.stringify(updates)
+        });
+
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || "Failed to save receipt details");
+        }
+        return await response.json();
+      }
+
+      async function exportReceipts() {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+          throw new Error("No token found. Please login first.");
+        }
+
+        const taxYear = Number(document.getElementById("taxYearInput").value);
+        if (!Number.isInteger(taxYear) || taxYear < 2000 || taxYear > 2100) {
+          throw new Error("Enter a valid tax year between 2000 and 2100.");
+        }
+
+        const response = await fetch(
+          `${API_BASE}/receipts/export.csv?tax_year=${taxYear}`,
+          { headers: { Authorization: `Bearer ${token}` } }
+        );
+        if (!response.ok) {
+          const error = await response.json();
+          throw new Error(error.detail || "Failed to export receipts");
+        }
+
+        const downloadUrl = URL.createObjectURL(await response.blob());
+        const link = document.createElement("a");
+        link.href = downloadUrl;
+        link.download = `receiptflow-expenses-${taxYear}.csv`;
+        link.click();
+        URL.revokeObjectURL(downloadUrl);
+      }
+
       async function startCheckout() {
         const token = localStorage.getItem("access_token");
         if (!token) {
@@ -643,6 +804,15 @@
       }
 
       document.getElementById("upgradeBtn").addEventListener("click", startCheckout);
+      document.getElementById("taxYearInput").value = new Date().getFullYear();
+      document.getElementById("exportReceiptsBtn").addEventListener("click", async () => {
+        try {
+          await exportReceipts();
+          setStatus("exportStatus", "CSV export downloaded.", "#16a34a");
+        } catch (error) {
+          setStatus("exportStatus", error.message, "#dc2626");
+        }
+      });
 
       document.getElementById("loginBtn").addEventListener("click", async () => {
         const email = document.getElementById("email").value.trim();

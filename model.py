@@ -1,7 +1,18 @@
 from database import Base
 from sqlalchemy.orm import relationship
 
-from sqlalchemy import Boolean, Column, DateTime, Float, ForeignKey, Integer, String, Text, func
+from sqlalchemy import (
+  Boolean,
+  Column,
+  DateTime,
+  Float,
+  ForeignKey,
+  Integer,
+  String,
+  Text,
+  UniqueConstraint,
+  func,
+)
 # ... existing imports ...
 
 
@@ -35,10 +46,26 @@ class Document(Base):
 
   filename = Column(String(255), nullable=False)
   file_path = Column(String(500), nullable=False)
+  file_sha256 = Column(String(64), nullable=True)
+  merchant = Column(String(255), nullable=True)
   total_amount = Column(Float, nullable=True)
   invoice_date = Column(String(50), nullable=True)
   raw_text = Column(Text, nullable=True)
+  expense_category = Column(
+      String(64),
+      nullable=False,
+      default="Uncategorized",
+      server_default="Uncategorized",
+  )
+  business_purpose = Column(Text, nullable=True)
   created_at = Column(DateTime(timezone=True), server_default=func.now())
+  __table_args__ = (
+      UniqueConstraint(
+          "user_id",
+          "file_sha256",
+          name="uq_documents_user_file_sha256",
+      ),
+  )
 
   # Relationship back to user
   owner = relationship("User", back_populates="documents")
