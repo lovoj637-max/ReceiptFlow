@@ -366,6 +366,7 @@
 
         <div class="nav-actions">
           <span class="badge" id="planBadge">Starter</span>
+          <button id="manageBillingBtn" class="secondary-btn" hidden>Manage billing</button>
           <button id="upgradeBtn" class="upgrade-btn">Upgrade</button>
         </div>
       </nav>
@@ -485,6 +486,7 @@
 
         <script>
       const API_BASE = `${window.location.origin}/api/v1`;
+      let billingPortalAvailable = false;
           const EXPENSE_CATEGORIES = [
             "Uncategorized",
             "Advertising",
@@ -540,6 +542,9 @@
         usageEl.textContent = usage;
         statusEl.textContent = status;
         badgeEl.textContent = plan;
+        billingPortalAvailable = Boolean(profile?.billing_portal_available);
+        document.getElementById("manageBillingBtn").hidden = !billingPortalAvailable;
+        document.getElementById("upgradeBtn").hidden = plan === "Pro";
       }
 
       function showReceiptText(receipt) {
@@ -786,11 +791,11 @@
             body: JSON.stringify({ plan: "pro" })
           });
 
+          const data = await response.json();
           if (!response.ok) {
-            throw new Error("Checkout unavailable");
+            throw new Error(data.detail || "Checkout unavailable");
           }
 
-          const data = await response.json();
           const checkoutUrl = data.checkout_url || data.url || data.redirect_url;
 
           if (!checkoutUrl) {
@@ -803,7 +808,33 @@
         }
       }
 
+      async function openBillingPortal() {
+        const token = localStorage.getItem("access_token");
+        if (!token) {
+          setStatus("loginStatus", "Please log in to manage billing.", "#dc2626");
+          return;
+        }
+
+        try {
+          const response = await fetch(`${API_BASE}/billing-portal`, {
+            method: "POST",
+            headers: { Authorization: `Bearer ${token}` }
+          });
+          const data = await response.json();
+          if (!response.ok) {
+            throw new Error(data.detail || "Unable to open billing management");
+          }
+          if (!data.url) {
+            throw new Error("Stripe did not return a billing portal URL");
+          }
+          window.location.href = data.url;
+        } catch (error) {
+          setStatus("loginStatus", error.message, "#dc2626");
+        }
+      }
+
       document.getElementById("upgradeBtn").addEventListener("click", startCheckout);
+      document.getElementById("manageBillingBtn").addEventListener("click", openBillingPortal);
       document.getElementById("taxYearInput").value = new Date().getFullYear();
       document.getElementById("exportReceiptsBtn").addEventListener("click", async () => {
         try {
@@ -827,6 +858,22 @@
           setStatus("loginStatus", error.message, "#dc2626");
         }
       });
+
+      const checkoutStatus = new URLSearchParams(window.location.search).get("checkout");
+      if (checkoutStatus === "success") {
+        setStatus("loginStatus", "Checkout complete. Stripe is confirming your subscription.");
+      } else if (checkoutStatus === "cancelled") {
+        setStatus("loginStatus", "Checkout cancelled.");
+      }
+
+      if (localStorage.getItem("access_token")) {
+        fetchProfile()
+          .then(updateProfileUI)
+          .catch(() => {
+            localStorage.removeItem("access_token");
+            setStatus("loginStatus", "Session expired. Please log in again.", "#dc2626");
+          });
+      }
 
       document.getElementById("uploadBtn").addEventListener("click", async () => {
         const fileInput = document.getElementById("receiptFile");

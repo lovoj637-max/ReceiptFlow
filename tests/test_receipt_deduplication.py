@@ -1,9 +1,15 @@
+import asyncio
 import os
 import csv
+import hashlib
+import hmac
+import json
 import tempfile
+import time
 import unittest
 from io import BytesIO
-from unittest.mock import patch
+from types import SimpleNamespace
+from unittest.mock import Mock, patch
 
 os.environ["DATABASE_URL"] = "sqlite://"
 os.environ["SECRET_KEY"] = "test-secret"
@@ -11,6 +17,7 @@ os.environ["SECRET_KEY"] = "test-secret"
 from sqlalchemy import create_engine, inspect
 from sqlalchemy.orm import sessionmaker
 from sqlalchemy.pool import StaticPool
+from starlette.requests import Request
 from starlette.datastructures import UploadFile
 
 import database
@@ -50,11 +57,47 @@ class ReceiptDeduplicationTests(unittest.TestCase):
         self.engine.dispose()
         self.temp_dir.cleanup()
 
-    def create_user(self, email):
-        user = User(email=email, hashed_password="test-hash", is_pro=True)
+    def create_user(self, email, is_pro=True):
+        user = User(
+            email=email,
+            hashed_password="test-hash",
+            is_pro=is_pro,
+        )
         self.session.add(user)
         self.session.commit()
         return user
+
+    def stripe_request(self, event, secret, valid_signature=True):
+        payload = json.dumps(event, separators=(",", ":")).encode()
+        timestamp = int(time.time())
+        signed_payload = str(timestamp).encode() + b"." + payload
+        signature = hmac.new(
+            secret.encode(),
+            signed_payload,
+            hashlib.sha256,
+        ).hexdigest()
+        if not valid_signature:
+            signature = "0" * 64
+        scope = {
+            "type": "http",
+            "method": "POST",
+            "path": "/api/v1/stripe/webhook",
+            "headers": [
+                (
+                    b"stripe-signature",
+                    f"t={timestamp},v1={signature}".encode(),
+                )
+            ],
+        }
+
+        async def receive():
+            return {
+                "type": "http.request",
+                "body": payload,
+                "more_body": False,
+            }
+
+        return Request(scope, receive)
 
     def upload(self, user, content, filename="receipt.png"):
         file = UploadFile(file=BytesIO(content), filename=filename)
@@ -242,6 +285,172 @@ class ReceiptDeduplicationTests(unittest.TestCase):
         self.assertEqual(rows[1][2], "'=SUM(A1:A2)")
         self.assertEqual(rows[2][6], "undated.png")
         self.assertIn("assign a tax year", rows[2][7])
+
+    def test_checkout_creates_customer_and_subscription_session(self):
+        user = self.create_user("checkout@example.com", is_pro=False)
+        client = Mock()
+        client.v1.customers.create.return_value = SimpleNamespace(id="cus_test")
+        client.v1.checkout.sessions.create.return_value = SimpleNamespace(
+            url="https://checkout.stripe.test/session"
+        )
+        settings = {
+            "STRIPE_SECRET_KEY": "sk_test_example",
+            "STRIPE_PRICE_ID": "price_test",
+            "APP_BASE_URL": "https://receiptflow.example",
+        }
+
+        with patch.dict(os.environ, settings), patch(
+            "main.stripe.StripeClient",
+            return_value=client,
+        ):
+            result = main.create_checkout(current_user=user, db=self.session)
+
+        self.assertEqual(result["checkout_url"], "https://checkout.stripe.test/session")
+        self.assertEqual(user.stripe_customer_id, "cus_test")
+        checkout_params = client.v1.checkout.sessions.create.call_args.args[0]
+        self.assertEqual(checkout_params["mode"], "subscription")
+        self.assertEqual(
+            checkout_params["line_items"],
+            [{"price": "price_test", "quantity": 1}],
+        )
+        self.assertEqual(
+            checkout_params["subscription_data"]["metadata"]["user_id"],
+            str(user.id),
+        )
+
+    def test_checkout_requires_stripe_configuration(self):
+        user = self.create_user("unconfigured@example.com", is_pro=False)
+        settings = {
+            "STRIPE_SECRET_KEY": "",
+            "STRIPE_PRICE_ID": "",
+            "APP_BASE_URL": "",
+        }
+
+        with patch.dict(os.environ, settings):
+            with self.assertRaises(main.HTTPException) as error:
+                main.create_checkout(current_user=user, db=self.session)
+
+        self.assertEqual(error.exception.status_code, 503)
+
+    def test_billing_portal_uses_existing_customer(self):
+        user = self.create_user("portal@example.com")
+        user.stripe_customer_id = "cus_test"
+        self.session.commit()
+        client = Mock()
+        client.v1.billing_portal.sessions.create.return_value = SimpleNamespace(
+            url="https://billing.stripe.test/portal"
+        )
+        settings = {
+            "STRIPE_SECRET_KEY": "sk_test_example",
+            "APP_BASE_URL": "https://receiptflow.example",
+        }
+
+        with patch.dict(os.environ, settings), patch(
+            "main.stripe.StripeClient",
+            return_value=client,
+        ):
+            result = main.create_billing_portal(current_user=user)
+
+        self.assertEqual(result["url"], "https://billing.stripe.test/portal")
+        portal_params = client.v1.billing_portal.sessions.create.call_args.args[0]
+        self.assertEqual(portal_params["customer"], "cus_test")
+
+    def test_signed_subscription_webhooks_update_pro_access(self):
+        user = self.create_user("webhook@example.com", is_pro=False)
+        secret = "whsec_test"
+        settings = {
+            "STRIPE_WEBHOOK_SECRET": secret,
+            "STRIPE_PRICE_ID": "price_test",
+        }
+        checkout_event = {
+            "id": "evt_checkout",
+            "type": "checkout.session.completed",
+            "data": {
+                "object": {
+                    "customer": "cus_test",
+                    "mode": "subscription",
+                    "metadata": {"user_id": str(user.id)},
+                }
+            },
+        }
+        subscription = {
+            "customer": "cus_test",
+            "status": "active",
+            "metadata": {"user_id": str(user.id)},
+        }
+        active_event = {
+            "id": "evt_active",
+            "type": "customer.subscription.updated",
+            "data": {"object": subscription},
+        }
+        canceled_event = {
+            "id": "evt_canceled",
+            "type": "customer.subscription.deleted",
+            "data": {
+                "object": {
+                    **subscription,
+                    "status": "canceled",
+                }
+            },
+        }
+
+        with patch.dict(os.environ, settings):
+            asyncio.run(
+                main.stripe_webhook(
+                    self.stripe_request(checkout_event, secret),
+                    db=self.session,
+                )
+            )
+            self.assertEqual(user.stripe_customer_id, "cus_test")
+            self.assertFalse(user.is_pro)
+
+            asyncio.run(
+                main.stripe_webhook(
+                    self.stripe_request(active_event, secret),
+                    db=self.session,
+                )
+            )
+            self.assertTrue(user.is_pro)
+            self.assertEqual(user.stripe_customer_id, "cus_test")
+
+            asyncio.run(
+                main.stripe_webhook(
+                    self.stripe_request(canceled_event, secret),
+                    db=self.session,
+                )
+            )
+
+        self.assertFalse(user.is_pro)
+
+    def test_webhook_rejects_invalid_signature(self):
+        user = self.create_user("signature@example.com", is_pro=False)
+        event = {
+            "id": "evt_invalid",
+            "type": "customer.subscription.updated",
+            "data": {
+                "object": {
+                    "customer": "cus_test",
+                    "status": "active",
+                    "metadata": {"user_id": str(user.id)},
+                }
+            },
+        }
+
+        with patch.dict(os.environ, {"STRIPE_WEBHOOK_SECRET": "whsec_test"}):
+            with self.assertRaises(main.HTTPException) as error:
+                asyncio.run(
+                    main.stripe_webhook(
+                        self.stripe_request(
+                            event,
+                            "whsec_test",
+                            valid_signature=False,
+                        ),
+                        db=self.session,
+                    )
+                )
+
+        self.assertEqual(error.exception.status_code, 400)
+        self.assertFalse(user.is_pro)
 
 
 if __name__ == "__main__":

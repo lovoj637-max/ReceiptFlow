@@ -54,3 +54,20 @@ treatment with a qualified tax professional.
    the runtime image includes the Tesseract executable required for OCR.
 
 `railway.toml` configures the build, start command, and `/health` check.
+
+### Stripe subscriptions
+
+1. In Stripe, create the Pro product and a recurring Price.
+2. Add `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, and `APP_BASE_URL` to the API
+   service variables. `APP_BASE_URL` must be the public HTTPS URL of the app.
+3. Add a Stripe webhook endpoint at
+   `https://YOUR_APP_HOST/api/v1/stripe/webhook` and subscribe it to
+   `checkout.session.completed`, `customer.subscription.created`,
+   `customer.subscription.updated`, and `customer.subscription.deleted`.
+4. Copy that webhook's signing secret into the `STRIPE_WEBHOOK_SECRET` Railway
+   variable. Enable the Stripe customer portal if users should manage or cancel
+   their subscriptions.
+
+Test with Stripe test-mode keys and a test Price before switching to live mode.
+Never commit Stripe secrets or put them in browser code. Pro access is changed
+only by verified Stripe subscription webhooks.

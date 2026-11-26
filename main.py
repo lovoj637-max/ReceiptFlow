@@ -2,12 +2,15 @@
 import csv
 import hashlib
 import io
+import logging
 import os
 import shutil
 import uuid
 from typing import List
+from urllib.parse import urlsplit
 
-from fastapi import Body, Depends, FastAPI, File, HTTPException, Query, UploadFile
+import stripe
+from fastapi import Depends, FastAPI, File, HTTPException, Query, Request, UploadFile
 from fastapi.middleware.cors import CORSMiddleware
 from fastapi.responses import FileResponse, Response
 from fastapi.security import OAuth2PasswordBearer, OAuth2PasswordRequestForm
@@ -30,6 +33,7 @@ from schames import (
 )
 
 app = FastAPI(title="ReceiptFlow")
+logger = logging.getLogger(__name__)
 
 app.add_middleware(
     CORSMiddleware,
@@ -152,6 +156,7 @@ def get_profile(current_user: User = Depends(get_current_user), db: Session = De
         "plan": plan,
         "usage": f"{receipt_count} / 20",
         "status": status_text,
+        "billing_portal_available": bool(current_user.stripe_customer_id),
         "payment_method": (
             f"{default_method.brand} •••• {default_method.last4}"
             if default_method
@@ -507,21 +512,213 @@ def get_receipt_by_id(
     return receipt
 
 
+def _stripe_client() -> stripe.StripeClient:
+    secret_key = os.getenv("STRIPE_SECRET_KEY", "").strip()
+    if not secret_key:
+        raise HTTPException(
+            status_code=503,
+            detail="Stripe payments are not configured",
+        )
+    return stripe.StripeClient(secret_key)
+
+
+def _stripe_price_id() -> str:
+    price_id = os.getenv("STRIPE_PRICE_ID", "").strip()
+    if not price_id.startswith("price_"):
+        raise HTTPException(
+            status_code=503,
+            detail="A valid Stripe subscription price is not configured",
+        )
+    return price_id
+
+
+def _app_base_url() -> str:
+    base_url = os.getenv("APP_BASE_URL", "").strip().rstrip("/")
+    parsed_url = urlsplit(base_url)
+    if (
+        not parsed_url.netloc
+        or parsed_url.scheme not in {"http", "https"}
+        or (
+            parsed_url.scheme != "https"
+            and parsed_url.hostname not in {"localhost", "127.0.0.1"}
+        )
+    ):
+        raise HTTPException(
+            status_code=503,
+            detail="APP_BASE_URL must be a public HTTPS URL",
+        )
+    return base_url
+
+
 @app.post("/api/v1/checkout")
 def create_checkout(
-    payload: dict = Body(default={"plan": "pro"}),
+    current_user: User = Depends(get_current_user),
+    db: Session = Depends(get_db),
+):
+    if current_user.is_pro:
+        raise HTTPException(status_code=409, detail="Subscription is already active")
+
+    price_id = _stripe_price_id()
+    client = _stripe_client()
+    base_url = _app_base_url()
+
+    try:
+        customer_id = current_user.stripe_customer_id
+        if not customer_id:
+            customer = client.v1.customers.create(
+                {
+                    "email": current_user.email,
+                    "metadata": {"user_id": str(current_user.id)},
+                },
+                {"idempotency_key": f"receiptflow-user-{current_user.id}"},
+            )
+            customer_id = customer.id
+            current_user.stripe_customer_id = customer_id
+            db.commit()
+
+        session = client.v1.checkout.sessions.create(
+            {
+                "mode": "subscription",
+                "customer": customer_id,
+                "line_items": [{"price": price_id, "quantity": 1}],
+                "client_reference_id": str(current_user.id),
+                "metadata": {"user_id": str(current_user.id)},
+                "subscription_data": {
+                    "metadata": {"user_id": str(current_user.id)}
+                },
+                "success_url": (
+                    f"{base_url}/?checkout=success"
+                    "&session_id={CHECKOUT_SESSION_ID}"
+                ),
+                "cancel_url": f"{base_url}/?checkout=cancelled",
+            },
+            {"idempotency_key": f"receiptflow-checkout-{uuid.uuid4()}"},
+        )
+    except stripe.StripeError as exc:
+        logger.exception("Stripe checkout session creation failed")
+        raise HTTPException(
+            status_code=502,
+            detail="Stripe could not start checkout",
+        ) from exc
+
+    if not session.url:
+        raise HTTPException(status_code=502, detail="Stripe returned no checkout URL")
+    return {"checkout_url": session.url}
+
+
+@app.post("/api/v1/billing-portal")
+def create_billing_portal(
     current_user: User = Depends(get_current_user),
 ):
-    plan = str(payload.get("plan", "pro")).lower()
-    if plan not in {"pro", "starter"}:
-        plan = "pro"
+    if not current_user.stripe_customer_id:
+        raise HTTPException(status_code=404, detail="No Stripe billing account found")
 
-    if current_user.is_pro:
-        redirect_url = "https://example.com/checkout/pro-already-active"
-    else:
-        redirect_url = f"https://example.com/checkout/{plan}"
+    client = _stripe_client()
+    base_url = _app_base_url()
+    try:
+        session = client.v1.billing_portal.sessions.create(
+            {
+                "customer": current_user.stripe_customer_id,
+                "return_url": base_url,
+            }
+        )
+    except stripe.StripeError as exc:
+        logger.exception("Stripe billing portal session creation failed")
+        raise HTTPException(
+            status_code=502,
+            detail="Stripe could not open billing management",
+        ) from exc
 
-    return {"checkout_url": redirect_url}
+    return {"url": session.url}
+
+
+def _stripe_object_id(value) -> str | None:
+    if isinstance(value, str):
+        return value
+    return getattr(value, "id", None)
+
+
+def _stripe_field(stripe_object, field: str, default=None):
+    try:
+        return stripe_object[field]
+    except (KeyError, TypeError):
+        return default
+
+
+def _stripe_event_user(
+    db: Session,
+    stripe_object,
+) -> User | None:
+    metadata = _stripe_field(stripe_object, "metadata") or {}
+    user_id = _stripe_field(metadata, "user_id")
+    if not user_id:
+        return None
+    try:
+        return db.query(User).filter(User.id == int(user_id)).first()
+    except (TypeError, ValueError):
+        return None
+
+
+@app.post("/api/v1/stripe/webhook")
+async def stripe_webhook(
+    request: Request,
+    db: Session = Depends(get_db),
+):
+    webhook_secret = os.getenv("STRIPE_WEBHOOK_SECRET", "").strip()
+    if not webhook_secret:
+        raise HTTPException(
+            status_code=503,
+            detail="Stripe webhooks are not configured",
+        )
+
+    signature = request.headers.get("stripe-signature")
+    if not signature:
+        raise HTTPException(status_code=400, detail="Missing Stripe signature")
+
+    payload = await request.body()
+    try:
+        event = stripe.Webhook.construct_event(payload, signature, webhook_secret)
+    except (ValueError, stripe.SignatureVerificationError) as exc:
+        raise HTTPException(
+            status_code=400,
+            detail="Invalid Stripe webhook signature or payload",
+        ) from exc
+
+    event_type = event["type"]
+    stripe_object = event["data"]["object"]
+    customer_id = _stripe_object_id(_stripe_field(stripe_object, "customer"))
+
+    if event_type == "checkout.session.completed":
+        if _stripe_field(stripe_object, "mode") == "subscription":
+            user = _stripe_event_user(db, stripe_object)
+            if user is None:
+                logger.warning("Completed Stripe checkout has no matching user")
+            elif customer_id:
+                if user.stripe_customer_id not in {None, customer_id}:
+                    logger.error("Stripe customer does not match the checkout user")
+                else:
+                    user.stripe_customer_id = customer_id
+                    db.commit()
+    elif event_type in {
+        "customer.subscription.created",
+        "customer.subscription.updated",
+        "customer.subscription.deleted",
+    }:
+        user = _stripe_event_user(db, stripe_object)
+        if user is None:
+            logger.warning("Stripe subscription event has no matching user")
+        elif customer_id and user.stripe_customer_id not in {None, customer_id}:
+            logger.error("Stripe customer does not match the subscription user")
+        else:
+            if customer_id:
+                user.stripe_customer_id = customer_id
+            user.is_pro = _stripe_field(stripe_object, "status") in {
+                "active",
+                "trialing",
+            }
+            db.commit()
+
+    return {"received": True}
 
 
 @app.get("/api/v1/me")
