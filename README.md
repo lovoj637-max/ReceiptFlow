@@ -60,7 +60,7 @@ treatment with a qualified tax professional.
 
 ### Stripe subscriptions
 
-1. In Stripe, create the Pro product and a recurring Price.
+1. In Stripe, create the Pro product and a recurring USD $5/month Price.
 2. Add `STRIPE_SECRET_KEY`, `STRIPE_PRICE_ID`, and `APP_BASE_URL` to the API
    service variables. `APP_BASE_URL` must be the public HTTPS URL of the app.
 3. Add a Stripe webhook endpoint at

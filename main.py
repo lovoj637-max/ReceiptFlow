@@ -535,7 +535,10 @@ def _stripe_price_id() -> str:
     if not price_id.startswith("price_"):
         raise HTTPException(
             status_code=503,
-            detail="A valid Stripe subscription price is not configured",
+            detail=(
+                "Set STRIPE_PRICE_ID to the recurring $5 USD/month Price ID "
+                "from Stripe (it starts with price_)."
+            ),
         )
     return price_id
 

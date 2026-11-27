@@ -395,6 +395,7 @@ class ReceiptDeduplicationTests(unittest.TestCase):
                 main.create_checkout(current_user=user, db=self.session)
 
         self.assertEqual(error.exception.status_code, 503)
+        self.assertIn("STRIPE_PRICE_ID", error.exception.detail)
 
     def test_billing_portal_uses_existing_customer(self):
         user = self.create_user("portal@example.com")
