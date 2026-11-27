@@ -119,6 +119,70 @@ class ReceiptDeduplicationTests(unittest.TestCase):
             1,
         )
 
+    def test_free_user_can_keep_five_unique_receipts_but_not_six(self):
+        user = self.create_user("free-limit@example.com", is_pro=False)
+        receipts = []
+        for index in range(5):
+            content = f"existing-receipt-{index}".encode()
+            receipts.append(
+                Document(
+                    user_id=user.id,
+                    filename=f"receipt-{index}.png",
+                    file_path=f"receipt-{index}.png",
+                    file_sha256=hashlib.sha256(content).hexdigest(),
+                )
+            )
+        self.session.add_all(receipts)
+        self.session.commit()
+
+        duplicate = self.upload(user, b"existing-receipt-0")
+        self.assertEqual(duplicate["id"], receipts[0].id)
+
+        with self.assertRaises(main.HTTPException) as error:
+            self.upload(user, b"sixth-unique-receipt")
+
+        self.assertEqual(error.exception.status_code, 403)
+        self.assertEqual(
+            self.session.query(Document)
+            .filter(Document.user_id == user.id)
+            .count(),
+            5,
+        )
+
+    def test_pro_user_can_upload_more_than_five_receipts(self):
+        user = self.create_user("pro-limit@example.com", is_pro=True)
+        for index in range(5):
+            self.session.add(
+                Document(
+                    user_id=user.id,
+                    filename=f"receipt-{index}.png",
+                    file_path=f"receipt-{index}.png",
+                    file_sha256=hashlib.sha256(
+                        f"existing-{index}".encode()
+                    ).hexdigest(),
+                )
+            )
+        self.session.commit()
+
+        self.upload(user, b"sixth-pro-receipt")
+
+        self.assertEqual(
+            self.session.query(Document)
+            .filter(Document.user_id == user.id)
+            .count(),
+            6,
+        )
+
+    def test_profile_reports_plan_specific_receipt_limits(self):
+        free_user = self.create_user("free-profile@example.com", is_pro=False)
+        pro_user = self.create_user("pro-profile@example.com", is_pro=True)
+
+        free_profile = main.get_profile(current_user=free_user, db=self.session)
+        pro_profile = main.get_profile(current_user=pro_user, db=self.session)
+
+        self.assertEqual(free_profile["usage"], "0 / 5")
+        self.assertEqual(pro_profile["usage"], "0 / Unlimited")
+
     def test_same_image_is_deduplicated_against_legacy_receipt(self):
         user = self.create_user("legacy@example.com")
         content = b"previously uploaded image"

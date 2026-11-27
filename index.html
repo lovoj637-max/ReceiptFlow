@@ -389,7 +389,7 @@
               </div>
               <div class="metric">
                 <span class="metric-label">Usage</span>
-                <span id="profileUsage" class="metric-value">0 / 20</span>
+                <span id="profileUsage" class="metric-value">0 / 5</span>
               </div>
               <div class="metric" style="grid-column: 1 / -1;">
                 <span class="metric-label">Email</span>
@@ -533,7 +533,7 @@
         const defaultPlan = "Starter";
         const plan = profile?.plan || defaultPlan;
         const email = profile?.email || "-";
-        const usage = profile?.usage || "0 / 20";
+        const usage = profile?.usage || (plan === "Pro" ? "0 / Unlimited" : "0 / 5");
         const status = profile?.status || "Pending";
         const displayName = profile?.name || (email !== "-" ? email : "Guest");
 
@@ -957,7 +957,7 @@
           const profile = await fetchProfile();
           updateProfileUI(profile);
         } catch (error) {
-          updateProfileUI({ name: "Guest", plan: "Starter", usage: "0 / 20", status: "Pending" });
+          updateProfileUI({ name: "Guest", plan: "Starter", usage: "0 / 5", status: "Pending" });
         }
       });
     </script>

@@ -34,6 +34,7 @@ from schames import (
 
 app = FastAPI(title="ReceiptFlow")
 logger = logging.getLogger(__name__)
+FREE_RECEIPT_LIMIT = 5
 
 app.add_middleware(
     CORSMiddleware,
@@ -154,7 +155,11 @@ def get_profile(current_user: User = Depends(get_current_user), db: Session = De
         "name": current_user.email.split("@", 1)[0].title(),
         "email": current_user.email,
         "plan": plan,
-        "usage": f"{receipt_count} / 20",
+        "usage": (
+            f"{receipt_count} / Unlimited"
+            if current_user.is_pro
+            else f"{receipt_count} / {FREE_RECEIPT_LIMIT}"
+        ),
         "status": status_text,
         "billing_portal_available": bool(current_user.stripe_customer_id),
         "payment_method": (
@@ -326,10 +331,13 @@ def upload_receipt(
 
     if not current_user.is_pro:
         receipt_count = db.query(Document).filter(Document.user_id == current_user.id).count()
-        if receipt_count >= 5:
+        if receipt_count >= FREE_RECEIPT_LIMIT:
             raise HTTPException(
                 status_code=403,
-                detail="Free tier limit reached (5 receipts). Upgrade to Pro for unlimited uploads!",
+                detail=(
+                    f"Free tier limit reached ({FREE_RECEIPT_LIMIT} receipts). "
+                    "Upgrade to Pro for unlimited uploads!"
+                ),
             )
 
     os.makedirs(UPLOAD_DIR, exist_ok=True)

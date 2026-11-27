@@ -34,6 +34,9 @@ Receipt uploads are deduplicated per account by exact image content. Uploading
 the same image again returns the existing receipt; a cropped or re-encoded
 image is treated as a separate upload.
 
+Free accounts can store up to five unique receipts. Active or trialing Pro
+subscriptions remove the upload limit.
+
 ## Tax organizer
 
 Review each receipt to edit its merchant, date, expense category, and business
